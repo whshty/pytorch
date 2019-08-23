@@ -756,11 +756,21 @@ def group_declarations(declarations):
        "signature": the signature used for Python argument parsing
     """
     grouped = defaultdict(dict)
-
     # first group by signature ignoring out arguments
     for declaration in declarations:
+
+        #if(declaration['name'] == 'empty_out'):
+        #    print('\n\n\n')
+        #    print('\n ---> declaration: ', declaration)
         signature = get_python_signature(declaration, False)
         v = grouped[signature]
+
+        #if(declaration['name'] == 'empty_out'):
+        #    print('\n ---> declaration2: ', declaration)
+        #    print('\n ---> signature: ', signature)
+        #    print('\n ---> v: ', v)
+        #    print('\n ----> grouped: ', grouped)
+
         if declaration['name'].endswith('_out'):
             v['out'] = declaration
             # prefer the signature with optional out=... arguments
@@ -891,6 +901,14 @@ def get_python_signature(declaration, include_out):
             continue
         # Skip `TensorOptions` in Python, as it is only used on the C++ side.
         if arg['simple_type'] == 'TensorOptions':
+            continue
+        if arg['simple_type'] == 'ScalarType?':
+            continue
+        if arg['simple_type'] == 'Device?':
+            continue
+        if arg['simple_type'] == 'Layout?':
+            continue
+        if arg['simple_type'] == 'bool?':
             continue
         if arg.get('kwarg_only', False) and positional:
             py_formal_args.append('*')

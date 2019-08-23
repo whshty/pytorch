@@ -3,10 +3,9 @@
 # This writes one file: variable_factories.h
 
 import re
-
+import copy
 from .utils import CodeTemplate, write
 from .gen_variable_type import format_trace
-
 
 FUNCTION_TEMPLATE = CodeTemplate("""\
 inline at::Tensor ${name}(${formals}) {
@@ -15,6 +14,25 @@ inline at::Tensor ${name}(${formals}) {
     at::AutoNonVariableTypeMode non_var_type_mode(true);
     return at::${name}(${actuals});
   })();
+  at::Tensor result =
+    autograd::make_variable(std::move(tensor), /*requires_grad=*/${requires_grad});
+  ${post_record_trace}
+  return result;
+}
+""")
+
+FUNCTION_TEMPLATE_TO = CodeTemplate("""\
+inline at::Tensor ${name}(${formals}) {
+  ${pre_record_trace}
+
+  auto options = at::TensorOptions().device(device).dtype(dtype).layout(layout).pinned_memory(pin_memory);
+
+
+  at::Tensor tensor = ([&]() {
+    at::AutoNonVariableTypeMode non_var_type_mode(true);
+    return at::${name}(${actuals});
+  })();
+
   at::Tensor result =
     autograd::make_variable(std::move(tensor), /*requires_grad=*/${requires_grad});
   ${post_record_trace}
@@ -33,39 +51,115 @@ def fully_qualified_type(argument_type):
     index = match.start(1)
     return "{}at::{}".format(argument_type[:index], argument_type[index:])
 
+def fix_c10_optional(type):
+    if type == "c10::optional<ScalarType>":
+        return "c10::optional<at::ScalarType>"
+
+    if type == "c10::optional<Layout>":
+        return "c10::optional<at::Layout>"
+
+    if type == "c10::optional<Device>":
+        return "c10::optional<at::Device>"
+
+    return type
 
 def gen_variable_factories(out, declarations, template_path):
     function_definitions = []
     for decl in declarations:
-        has_tensor_options = any(a["simple_type"] == "TensorOptions" for a in decl["arguments"])
+        a = any(arg['type'] == 'c10::optional<ScalarType>' for arg in decl['arguments']) and any(arg['type'] == 'c10::optional<Layout>' for arg in decl['arguments']) and any(arg['type'] == 'c10::optional<Device>' for arg in decl['arguments']) and any(arg['type'] == 'c10::optional<bool>' for arg in decl['arguments'])
+        a1 = any(arg['type'] == 'c10::optional<at::ScalarType>' for arg in decl['arguments']) and any(arg['type'] == 'c10::optional<at::Layout>' for arg in decl['arguments']) and any(arg['type'] == 'c10::optional<at::Device>' for arg in decl['arguments']) and any(arg['type'] == 'c10::optional<bool>' for arg in decl['arguments'])
+        b = any(arg['type'] == 'ScalarType' for arg in decl['arguments']) and any(arg['type'] == 'Layout' for arg in decl['arguments']) and any(arg['type'] == 'Device' for arg in decl['arguments']) and any(arg['type'] == 'bool' for arg in decl['arguments'])
+        b1 = any(arg['type'] == 'at::ScalarType' for arg in decl['arguments']) and any(arg['type'] == 'at::Layout' for arg in decl['arguments']) and any(arg['type'] == 'at::Device' for arg in decl['arguments']) and any(arg['type'] == 'bool' for arg in decl['arguments'])
+        is_tensor_option = a or b or a1 or b1
+
+        #is_tensor_option = any(arg['type'] == 'c10::optional<ScalarType>' for arg in decl['arguments']) and any(arg['type'] == 'c10::optional<Layout>' for arg in decl['arguments']) and any(arg['type'] == 'c10::optional<Device>' for arg in decl['arguments']) and any(arg['type'] == 'c10::optional<bool>' for arg in decl['arguments'])
         is_namespace_fn = 'namespace' in decl['method_of']
-        if (has_tensor_options or decl["name"].endswith("_like")) and is_namespace_fn:
-            function_definitions.append(process_function(decl, has_tensor_options))
+        if (is_tensor_option or decl["name"].endswith("_like")) and is_namespace_fn:
+            function_definitions.append(process_function(decl, is_tensor_option))
     write(out,
           "variable_factories.h",
           CodeTemplate.from_file(template_path + "/variable_factories.h"),
           {"function_definitions": function_definitions})
 
+supported_topt_arguments = [
+    [
+        {'name': 'dtype', 'type': 'ScalarType', 'is_nullable': False, 'annotation': None},
+        {'name': 'layout', 'type': 'Layout', 'is_nullable': False, 'annotation': None},
+        {'name': 'device', 'type': 'Device', 'is_nullable': False, 'annotation': None},
+        {'name': 'pin_memory', 'type': 'bool', 'is_nullable': False, 'annotation': None, 'default': False},
+    ]
+]
+supported_topt_arguments.append(copy.deepcopy(supported_topt_arguments[0]))
+for arg in supported_topt_arguments[1]:
+    arg.update({'kwarg_only': True})
+supported_topt_arguments.append(copy.deepcopy(supported_topt_arguments[1]))
+for arg in supported_topt_arguments[2]:
+    arg.update({'default': 'c10::nullopt', 'is_nullable': True})
+# add explicit support for what is needed for tril_indices / triu_indices
+supported_topt_arguments.append(
+    [
+        {'name': 'dtype', 'type': 'ScalarType', 'annotation': None, 'kwarg_only': True,
+         'default': 'long', 'is_nullable': True},
+        {'name': 'layout', 'type': 'Layout', 'annotation': None, 'kwarg_only': True,
+         'default': 'c10::nullopt', 'is_nullable': True},
+        {'name': 'device', 'type': 'Device', 'annotation': None, 'kwarg_only': True,
+         'default': 'c10::nullopt', 'is_nullable': True},
+        {'name': 'pin_memory', 'type': 'bool', 'annotation': None, 'kwarg_only': True,
+         'default': 'c10::nullopt', 'is_nullable': True},
+    ]
+)
 
-def process_function(decl, has_tensor_options):
+def check_topt_representation(topt_representation):
+    for idx, supported_topt in enumerate(supported_topt_arguments):
+        matches = all(topt_representation[i] == topt for i, topt in enumerate(supported_topt))
+        if matches:
+            return corresponding_topts[idx]
+    return None
+
+def is_tensor_option(argument):
+    return argument['name'] in ['dtype', 'layout', 'device', 'pin_memory']
+
+def process_function(decl, is_tensor_option):
     formals = []
     actuals = []
     for argument in decl["arguments"]:
         type = fully_qualified_type(argument["type"])
+        type = fix_c10_optional(type)
+
         default = " = {}".format(argument["default"]) if "default" in argument else ""
+        if (default != ""):
+
+            if default == ' = long':
+                default = " = at::kLong"
+
+            if default == " = False":
+                default = " = false"
+
         formals.append("{} {}{}".format(type, argument["name"], default))
         actual = argument["name"]
-        if argument["simple_type"] == "TensorOptions":
-            # We want to make `at::{name}` always return a
-            # tensor and not a variable, since we create a variable right after.
-            actual = "at::TensorOptions({}).is_variable(false)".format(actual)
+
         actuals.append(actual)
-    requires_grad = "options.requires_grad()" if has_tensor_options else "false"
-    if decl['name'].endswith('_like') and not has_tensor_options:
+
+    if 'dtype' in actuals and 'layout' in actuals and 'device' in actuals and 'pin_memory' in actuals:
+        index = actuals.index('dtype')
+        actuals.remove('dtype')
+        actuals.remove('layout')
+        actuals.remove('pin_memory')
+        actuals.remove('device')
+
+        actuals.insert(index, 'options')
+
+    requires_grad = "options.requires_grad()" if is_tensor_option else "false"
+    if decl['name'].endswith('_like') and not is_tensor_option:
         # it's a tensor
         actuals.append('{}.options().is_variable(false)'.format(actuals[0]))
 
     pre_record_trace, post_record_trace = format_trace(decl)
+
+    if is_tensor_option:
+        return FUNCTION_TEMPLATE_TO.substitute(
+            name=decl["name"], formals=formals, actuals=actuals, requires_grad=requires_grad,
+            pre_record_trace=pre_record_trace, post_record_trace=post_record_trace)
 
     return FUNCTION_TEMPLATE.substitute(
         name=decl["name"], formals=formals, actuals=actuals, requires_grad=requires_grad,

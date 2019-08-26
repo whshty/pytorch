@@ -758,18 +758,8 @@ def group_declarations(declarations):
     grouped = defaultdict(dict)
     # first group by signature ignoring out arguments
     for declaration in declarations:
-
-        #if(declaration['name'] == 'empty_out'):
-        #    print('\n\n\n')
-        #    print('\n ---> declaration: ', declaration)
         signature = get_python_signature(declaration, False)
         v = grouped[signature]
-
-        #if(declaration['name'] == 'empty_out'):
-        #    print('\n ---> declaration2: ', declaration)
-        #    print('\n ---> signature: ', signature)
-        #    print('\n ---> v: ', v)
-        #    print('\n ----> grouped: ', grouped)
 
         if declaration['name'].endswith('_out'):
             v['out'] = declaration

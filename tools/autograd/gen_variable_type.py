@@ -842,7 +842,7 @@ def emit_body(declaration):
                     combined, unpacked_method_args=unpacked_method_args)
 
             if (is_tensor_option):
-                print("\n [base_type_call]: ", base_type_call)
+                base_type_call = base_type_call.replace('dtype, layout, device, pin_memory', 'at::TensorOptions().device(device).dtype(dtype).layout(layout).pinned_memory(pin_memory)')
 
             if not modifies_arguments and not returns_void:
                 rhs_value, extra_wrapping_stmts = wrap_output('tmp')
@@ -854,6 +854,15 @@ def emit_body(declaration):
                 call = DISPATCH_TO_NON_VAR_TYPE_WITHOUT_RETURN_VALUES.substitute(
                     base_type_call=base_type_call)
         else:
+            if (is_tensor_option):
+                if 'dtype' in declaration['type_method_args'] and 'layout' in declaration['type_method_args'] and 'device' in declaration['type_method_args'] and 'pin_memory' in declaration['type_method_args']:
+                    index = declaration['type_method_args'].index('dtype')
+                    declaration['type_method_args'].remove('dtype')
+                    declaration['type_method_args'].remove('layout')
+                    declaration['type_method_args'].remove('pin_memory')
+                    declaration['type_method_args'].remove('device')
+                    declaration['type_method_args'].insert(index, 'at::TensorOptions().device(device).dtype(dtype).layout(layout).pinned_memory(pin_memory)')
+
             call = CALL_DEFAULT.substitute(declaration)
             if not modifies_arguments and not returns_void:
                 call = '{} = {}'.format(tie_return_values(), call)

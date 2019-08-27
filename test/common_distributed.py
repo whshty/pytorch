@@ -146,7 +146,7 @@ class MultiProcessTestCase(TestCase):
         for p in self.processes:
             p.join(timeout)
         elapsed_time = time.time() - start_time
-        if fn in self.skip_return_code_checks:
+        if fn not in self.skip_return_code_checks:
             self._check_return_codes(elapsed_time)
 
     def _check_return_codes(self, elapsed_time):

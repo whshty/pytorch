@@ -2,7 +2,11 @@ local.properties
 **/*.iml
 .gradle
 gradlew*
+<<<<<<< HEAD
 gradle/wrapper
+=======
+gradle/wrapper/**
+>>>>>>> [android][gradle] Gradle tasks for publishing nightly builds to artefactory, releases to bintray
 .idea/*
 .externalNativeBuild
 build

@@ -218,12 +218,15 @@ class CAFFE2_API Tensor {
 
   DeprecatedTypeProperties & type() const {
     return globalDeprecatedTypePropertiesRegistry().getDeprecatedTypeProperties(
-        tensorTypeIdToBackend(type_id()),
+        // TODO: When we build in Variable here, we need to change the
+        // signature of getDeprecatedTypeProperties to collapse backend
+        // and is_variable into TensorTypeSet
+        tensorTypeIdToBackend(type_set().firstTypeId()),
         scalar_type(),
         is_variable());
   }
-  TensorTypeId type_id() const {
-    return impl_->type_id();
+  TensorTypeSet type_set() const {
+    return impl_->type_set();
   }
   ScalarType scalar_type() const {
     return typeMetaToScalarType(impl_->dtype());
@@ -849,13 +852,13 @@ Tensor make_tensor(Args&&... args) {
   return Tensor(c10::make_intrusive<T>(std::forward<Args>(args)...));
 }
 
-inline Backend infer_backend(const Tensor & t) {
-  TORCH_CHECK(t.defined(), "undefined Tensor");
-  return tensorTypeIdToBackend(t.type_id());
+inline TensorTypeSet infer_tensor_type_set(const Tensor & tl) {
+  return tl.type_set();
 }
-inline Backend infer_backend(const TensorList & tl) {
+
+inline TensorTypeSet infer_tensor_type_set(TensorList tl) {
   TORCH_CHECK(tl.size() > 0, "expected a non-empty list of Tensors");
-  return tensorTypeIdToBackend(tl[0].type_id());
+  return tl[0].type_set();
 }
 
 inline bool infer_is_variable(const Tensor & t) {

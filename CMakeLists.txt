@@ -8,6 +8,13 @@ cmake_minimum_required(VERSION 3.5 FATAL_ERROR)
 cmake_policy(SET CMP0010 NEW)
 cmake_policy(SET CMP0025 NEW)
 
+# Suppress warning flags in default MSVC configuration.  It's not
+# mandatory that we do this (and we don't if cmake is old), but it's
+# nice when it's possible, and it's possible on our Windows configs.
+if(NOT CMAKE_VERSION VERSION_LESS 3.15.0)
+  cmake_policy(SET CMP0092 NEW)
+endif()
+
 # ---[ Project and semantic versioning.
 project(Caffe2 CXX C)
 
@@ -185,30 +192,48 @@ cmake_dependent_option(
 
 set(ONNX_NAMESPACE "onnx_torch" CACHE STRING "A namespace for ONNX; needed to build with other frameworks that share ONNX.")
 
-# For MSVC,
-# 1. Replace /Zi and /ZI with /Z7
-# 2. Switch off incremental linking in debug builds
 if (MSVC)
-  string(APPEND CMAKE_C_FLAGS " /EHa")
-  string(APPEND CMAKE_CXX_FLAGS " /EHa")
-  if(MSVC_Z7_OVERRIDE)
-    foreach(flag_var
-        CMAKE_C_FLAGS CMAKE_C_FLAGS_DEBUG CMAKE_C_FLAGS_RELEASE
-        CMAKE_C_FLAGS_MINSIZEREL CMAKE_C_FLAGS_RELWITHDEBINFO
-        CMAKE_CXX_FLAGS CMAKE_CXX_FLAGS_DEBUG CMAKE_CXX_FLAGS_RELEASE
-        CMAKE_CXX_FLAGS_MINSIZEREL CMAKE_CXX_FLAGS_RELWITHDEBINFO)
+  foreach(flag_var
+      CMAKE_C_FLAGS CMAKE_C_FLAGS_DEBUG CMAKE_C_FLAGS_RELEASE
+      CMAKE_C_FLAGS_MINSIZEREL CMAKE_C_FLAGS_RELWITHDEBINFO
+      CMAKE_CXX_FLAGS CMAKE_CXX_FLAGS_DEBUG CMAKE_CXX_FLAGS_RELEASE
+      CMAKE_CXX_FLAGS_MINSIZEREL CMAKE_CXX_FLAGS_RELWITHDEBINFO)
+    # Replace /Zi and /ZI with /Z7
+    if(MSVC_Z7_OVERRIDE)
       if(${flag_var} MATCHES "/Z[iI]")
         string(REGEX REPLACE "/Z[iI]" "/Z7" ${flag_var} "${${flag_var}}")
       endif(${flag_var} MATCHES "/Z[iI]")
-    endforeach(flag_var)
-  endif(MSVC_Z7_OVERRIDE)
+    endif(MSVC_Z7_OVERRIDE)
+    # Turn off warnings on Windows.  In an ideal world we'd be warning
+    # clean on Windows too, but this is too much work for our
+    # non-Windows developers.
+    string(REPLACE "/W3" "" ${flag_var} "${${flag_var}}")
+    # Suppress EHs is overridden by EHa warning
+    string(REPLACE "/EHsc" "" ${flag_var} "${${flag_var}}")
+
+    string(APPEND ${flag_var} " /w /EHa")
+  endforeach(flag_var)
+
   foreach(flag_var
       CMAKE_SHARED_LINKER_FLAGS_DEBUG CMAKE_STATIC_LINKER_FLAGS_DEBUG
       CMAKE_EXE_LINKER_FLAGS_DEBUG CMAKE_MODULE_LINKER_FLAGS_DEBUG)
+    # Switch off incremental linking in debug builds
     if(${flag_var} MATCHES "/INCREMENTAL" AND NOT ${flag_var} MATCHES "/INCREMENTAL:NO")
       string(REGEX REPLACE "/INCREMENTAL" "/INCREMENTAL:NO" ${flag_var} "${${flag_var}}")
     endif()
   endforeach(flag_var)
+
+  foreach(flag_var
+      CMAKE_SHARED_LINKER_FLAGS_DEBUG CMAKE_STATIC_LINKER_FLAGS_DEBUG
+      CMAKE_EXE_LINKER_FLAGS_DEBUG CMAKE_MODULE_LINKER_FLAGS_DEBUG
+      CMAKE_SHARED_LINKER_FLAGS_RELEASE CMAKE_STATIC_LINKER_FLAGS_RELEASE
+      CMAKE_EXE_LINKER_FLAGS_RELEASE CMAKE_MODULE_LINKER_FLAGS_RELEASE)
+    string(APPEND ${flag_var} " /ignore:4049 /ignore:4217")
+  endforeach(flag_var)
+
+  # Try harder
+  list(APPEND CUDA_NVCC_FLAGS "-Xcompiler /w -w")
+
   # Turning off USE_DISTRIBUTED on default
   set(USE_DISTRIBUTED OFF)
 endif(MSVC)
@@ -424,6 +449,11 @@ else()
     # /bigobj increases number of sections in .obj file, which is needed to link
     # against libaries in Python 2.7 under Windows
     set(${flag_var} "${${flag_var}} /MP /bigobj")
+    # Turn off warnings on Windows
+    string(REPLACE "/W3" "/w" ${flag_var} "${${flag_var}}")
+    # Suppress EHs is overridden by EHa warning
+    string(REPLACE "/EHsc" "" ${flag_var} "${${flag_var}}")
+    string(REPLACE "/EHs" "" ${flag_var} "${${flag_var}}")
   endforeach(flag_var)
 endif()
 

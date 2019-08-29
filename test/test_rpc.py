@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 
 import sys
+import threading
 import unittest
 
 import torch
 import torch.distributed as dist
-from common_distributed import MultiProcessTestCase
+from common_distributed import MultiProcessTestCase, get_timeout
 from common_utils import load_tests, run_tests
 
 
@@ -339,6 +340,44 @@ class RpcTest(MultiProcessTestCase):
     def test_stress_heavy_rpc(self):
         self._stress_test_rpc(heavy_rpc, repeat=20, args=(torch.ones(100, 100),))
 
+    @_wrap_with_rpc
+    def test_builtin_remote_ret(self):
+        n = self.rank + 1
+        dst_rank = n % self.world_size
+        rref = dist.remote('worker{}'.format(dst_rank), torch.add,
+                           args=(torch.ones(n, n), torch.ones(n, n)))
+        self.assertEqual(rref.to_here(), torch.ones(n, n) * 2)
 
-if __name__ == "__main__":
+    @_wrap_with_rpc
+    def test_multi_builtin_remote_ret(self):
+        m = 20
+        n = self.rank + 1
+        dst_rank = n % self.world_size
+        rrefs = []
+        expected = []
+        for i in range(m):
+            n = n + i
+            rrefs.append(dist.remote(
+                'worker{}'.format(dst_rank),
+                torch.add,
+                args=(torch.ones(n, n), torch.ones(n, n))
+            ))
+            expected.append(torch.ones(n, n) * 2)
+
+        def all_to_here(rrefs, values):
+            for i in range(m):
+                values.append(rrefs[i].to_here())
+
+        values = []
+        t = threading.Thread(target=all_to_here, args=(rrefs, values))
+        t.start()
+        t.join(int(get_timeout(self.id()) / 2))
+
+        self.assertEqual(m, len(values))
+
+        for i in range(m):
+            self.assertEqual(values[i], expected[i])
+
+
+if __name__ == '__main__':
     run_tests()
